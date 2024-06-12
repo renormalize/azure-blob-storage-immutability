@@ -1,2 +1,3 @@
-# azure-blob-storage-immutability
-Repo to test out ABS's immutable storage functionality
+# Azure Blob Storage Immutability
+
+This repo is to perform tests on Azure Blob Storage for the immutable storage functionality that it provides.
