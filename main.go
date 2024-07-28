@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"os"
+
+	"github.com/renormalize/azure-blob-storage-immutability/azure"
 )
 
 func containerInfo() (string, string, string, error) {
@@ -40,7 +42,8 @@ func main() {
 	fmt.Println("Immutable storage test")
 	fmt.Println()
 
-	extend, delete := getOperations()
+	// TODO: @renormalize this is a no-op for now
+	getOperations()
 
 	accountName, accountKey, containerName, err := containerInfo()
 	if err != nil {
@@ -48,40 +51,18 @@ func main() {
 		return
 	}
 
-	connection, err := createAzConnection(accountName, accountKey, containerName)
+	containerClient, err := azure.NewAzureContainerClient(accountName, accountKey, containerName)
 	if err != nil {
-		fmt.Println("Could not create a connection", err)
+		fmt.Println("Could not create a client to the container of the given name", err)
 		return
 	}
 
-	blobNames, err := connection.listBlobs()
+	fmt.Println("The immutability properties are")
+	hasImmutabilityPolicy, isImmutableStorageWithVersioningEnabled, err := containerClient.CheckImmutability()
 	if err != nil {
-		fmt.Println("error while listing the blob names:", err)
-		return
+		fmt.Println("Failed to check immutability properties because of", err)
 	}
 
-	fmt.Println("The blobs are:", blobNames)
-	fmt.Println()
-
-	if extend {
-		fmt.Println("Extending blobs")
-		for _, blobName := range blobNames {
-			_, err := connection.setBlobImmutabilityDuration(blobName, 5)
-			if err != nil {
-				fmt.Println("error while extending the period:", err)
-			}
-		}
-		fmt.Println()
-	}
-
-	if delete {
-		fmt.Println("Deleting blobs")
-		for _, blobName := range blobNames {
-			_, err := connection.deleteObjects(blobName)
-			if err != nil {
-				fmt.Println("error while deleting the objects:", err)
-			}
-		}
-		fmt.Println()
-	}
+	fmt.Println("HasImmutabilityPolicy: ", hasImmutabilityPolicy)
+	fmt.Println("HasImmutabilityPolicy: ", isImmutableStorageWithVersioningEnabled)
 }
