@@ -1,87 +1,97 @@
 package main
 
 import (
-	"fmt"
-	"os"
+	"context"
+	"log"
+	"time"
+
+	"github.com/renormalize/azure-blob-storage-immutability/container"
 )
 
-func containerInfo() (string, string, string, error) {
-	accountName, ok := os.LookupEnv("AZURE_ACCOUNT_NAME")
-	if !ok {
-		return "", "", "", fmt.Errorf("no account name was provided")
-	}
-
-	accountKey, ok := os.LookupEnv("AZURE_ACCOUNT_KEY")
-	if !ok {
-		return "", "", "", fmt.Errorf("no account key was provided")
-	}
-
-	containerName, ok := os.LookupEnv("AZURE_CONTAINER_NAME")
-	if !ok {
-		return "", "", "", fmt.Errorf("no container name was provided")
-	}
-
-	return accountName, accountKey, containerName, nil
-}
-
-func getOperations() (extend, delete bool) {
-	for _, operation := range os.Args[1:] {
-		switch operation {
-		case "delete":
-			delete = true
-		case "extend":
-			extend = true
-		}
-	}
-	return
-}
-
 func main() {
-	fmt.Println("Immutable storage test")
-	fmt.Println()
+	log.Println("Immutable storage test")
 
 	extend, delete := getOperations()
 
 	accountName, accountKey, containerName, err := containerInfo()
 	if err != nil {
-		fmt.Println("Starting the program failed because", err)
-		return
+		log.Fatal("Starting the program failed because", err)
 	}
 
-	connection, err := createAzConnection(accountName, accountKey, containerName)
+	containerClient, err := container.NewAzureContainerClient(accountName, accountKey, containerName)
 	if err != nil {
-		fmt.Println("Could not create a connection", err)
-		return
+		log.Fatal("Could not create a client to the container of the given name", err)
 	}
 
-	blobNames, err := connection.listBlobs()
+	log.Println("Listing all the blobs in the container", containerName)
+
+	blobs, err := containerClient.ListBlobs(context.Background())
 	if err != nil {
-		fmt.Println("error while listing the blob names:", err)
-		return
+		log.Fatal("Listing the blobs failed with error: %w", err)
+	}
+	for _, blob := range blobs {
+		log.Println(blob)
 	}
 
-	fmt.Println("The blobs are:", blobNames)
-	fmt.Println()
+	log.Println("The current immutability properties of the container are:")
+	hasImmutabilityPolicy, isImmutableStorageWithVersioningEnabled, err := containerClient.CheckImmutability(context.Background())
+	if err != nil {
+		log.Fatal("Failed to check immutability properties because of", err)
+	}
+
+	log.Println("HasImmutabilityPolicy: ", hasImmutabilityPolicy)
+	log.Println("IsImmutableStorageWithVersioningEnabled: ", isImmutableStorageWithVersioningEnabled)
+
+	tags := map[string]string{
+		"time:": time.Now().String(),
+		"tag":   "set",
+		"key":   "value",
+		"test":  "ing",
+	}
+
+	log.Println("Setting the same tags on all blobs")
+	for _, blob := range blobs {
+		err := containerClient.NewBlockBlobClient(blob.Name).SetTags(context.Background(), tags)
+		if err != nil {
+			log.Printf("Failed to set tag on blob %v with error: %v\n", blob.Name, err)
+		}
+	}
+
+	// Listing the blobs again
+	log.Println("Listing the blobs after settings the tags in the container", containerName)
+	blobs, err = containerClient.ListBlobs(context.Background())
+	if err != nil {
+		log.Fatal("Listing the blobs failed with error: %w", err)
+	}
+	for _, blob := range blobs {
+		log.Println(blob)
+	}
+
+	extensionPeriod := 5
 
 	if extend {
-		fmt.Println("Extending blobs")
-		for _, blobName := range blobNames {
-			_, err := connection.setBlobImmutabilityDuration(blobName, 5)
+		log.Println("Extending the immutable period of the blobs")
+		for _, blob := range blobs {
+			log.Printf("Extending immutable period of blob %v by %d\n", blob.Name, extensionPeriod)
+			expiryDate, err := containerClient.NewBlockBlobClient(blob.Name).
+				SetImmutability(context.Background(), extensionPeriod)
 			if err != nil {
-				fmt.Println("error while extending the period:", err)
+				log.Printf("Failed to set immutability on blob %v with error: %v\n", blob.Name, err)
+			} else {
+				log.Printf("Blob %v expires on %v\n", blob.Name, *expiryDate)
 			}
 		}
-		fmt.Println()
 	}
 
 	if delete {
-		fmt.Println("Deleting blobs")
-		for _, blobName := range blobNames {
-			_, err := connection.deleteObjects(blobName)
+		log.Println("Deleting blobs")
+		for _, blob := range blobs {
+			err := containerClient.NewBlockBlobClient(blob.Name).Delete(context.Background())
 			if err != nil {
-				fmt.Println("error while deleting the objects:", err)
+				log.Printf("Failed to delete blob %v with error: %v\n", blob.Name, err)
+			} else {
+				log.Println("Deleted blob ", blob.Name)
 			}
 		}
-		fmt.Println()
 	}
 }
